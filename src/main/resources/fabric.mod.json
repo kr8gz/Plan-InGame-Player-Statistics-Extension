@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "plan-in-game-player-statistics-extension",
+  "version": "${version}",
+  "name": "Plan In-Game Player Statistics Extension",
+  "description": "",
+  "authors": [
+    "kr8gz"
+  ],
+  "contact": {
+    "repo": "https://github.com/kr8gz/Plan In-Game Player Statistics Extension"
+  },
+  "license": "All-Rights-Reserved",
+  "environment": "server",
+  "entrypoints": {
+    "server": [
+      "io.github.kr8gz.planingameplayerstatisticsextension.PlanInGamePlayerStatisticsExtension"
+    ]
+  },
+  "mixins": [
+    "plan-in-game-player-statistics-extension.mixins.json"
+  ],
+  "accessWidener" : "plan-in-game-player-statistics-extension.accesswidener",
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "fabric": "*",
+    "minecraft": "${minecraft_version}"
+  },
+  "suggests": {
+    "plan": "${plan_version}"
+  }
+}
