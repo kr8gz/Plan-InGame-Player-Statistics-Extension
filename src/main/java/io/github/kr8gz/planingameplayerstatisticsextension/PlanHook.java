@@ -25,6 +25,7 @@ public class PlanHook {
     private static QueryAPIAccessor queryAPIAccessor;
 
     public static void hookIntoPlan() {
+        // FIXME plan may be enabled before server starting event wtf??
         ServerLifecycleEvents.SERVER_STARTING.register(server -> {
             try {
                 if (!areRequiredCapabilitiesAvailable()) return;

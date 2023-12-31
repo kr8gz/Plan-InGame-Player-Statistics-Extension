@@ -5,7 +5,7 @@ plugins {
 }
 
 loom {
-    accessWidenerPath = file("src/main/resources/plan-in-game-player-statistics-extension.accesswidener")
+    accessWidenerPath = file("src/main/resources/plan-ingame-player-statistics-extension.accesswidener")
     serverOnlyMinecraftJar()
 }
 
