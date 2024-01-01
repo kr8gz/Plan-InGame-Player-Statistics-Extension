@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "id": "plan-ingame-player-statistics-extension",
+  "id": "plan_ingame_player_statistics_extension",
   "version": "${version}",
   "name": "Plan In-Game Player Statistics Extension",
   "description": "",
@@ -14,13 +14,13 @@
   "environment": "server",
   "entrypoints": {
     "server": [
-      "io.github.kr8gz.planingameplayerstatisticsextension.PlanInGamePlayerStatisticsExtension"
+      "io.github.kr8gz.plan_ingame_player_statistics_extension.PlanInGamePlayerStatisticsExtension"
     ]
   },
   "mixins": [
-    "plan-ingame-player-statistics-extension.mixins.json"
+    "plan_ingame_player_statistics_extension.mixins.json"
   ],
-  "accessWidener" : "plan-ingame-player-statistics-extension.accesswidener",
+  "accessWidener" : "plan_ingame_player_statistics_extension.accesswidener",
   "depends": {
     "fabricloader": ">=${loader_version}",
     "fabric": "*",

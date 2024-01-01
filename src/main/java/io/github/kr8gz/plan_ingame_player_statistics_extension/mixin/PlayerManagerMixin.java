@@ -1,6 +1,6 @@
-package io.github.kr8gz.planingameplayerstatisticsextension.mixin;
+package io.github.kr8gz.plan_ingame_player_statistics_extension.mixin;
 
-import io.github.kr8gz.planingameplayerstatisticsextension.PlanHook;
+import io.github.kr8gz.plan_ingame_player_statistics_extension.PlanHook;
 import net.minecraft.server.PlayerManager;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.stat.ServerStatHandler;

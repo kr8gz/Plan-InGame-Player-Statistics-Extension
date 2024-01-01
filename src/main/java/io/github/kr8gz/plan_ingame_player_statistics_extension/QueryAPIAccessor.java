@@ -1,4 +1,4 @@
-package io.github.kr8gz.planingameplayerstatisticsextension;
+package io.github.kr8gz.plan_ingame_player_statistics_extension;
 
 import com.djrapitops.plan.query.QueryService;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
@@ -33,11 +33,11 @@ public class QueryAPIAccessor {
 
     public QueryAPIAccessor(MinecraftServer server) {
         this.queryService = QueryService.getInstance();
-        createTablesIfNeeded();
+        createTableIfNeeded();
         populatePlayerStats(server);
     }
 
-    private void createTablesIfNeeded() {
+    private void createTableIfNeeded() {
         var createTableSql = "CREATE TABLE IF NOT EXISTS " + INGAME_STATISTICS_TABLE_NAME + " (" +
                 PLAYER_UUID_COLUMN + ", " +
                 STAT_NAME_COLUMN + ", " +

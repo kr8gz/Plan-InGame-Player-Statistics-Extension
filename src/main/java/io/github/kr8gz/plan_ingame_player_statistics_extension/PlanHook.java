@@ -1,4 +1,4 @@
-package io.github.kr8gz.planingameplayerstatisticsextension;
+package io.github.kr8gz.plan_ingame_player_statistics_extension;
 
 import com.djrapitops.plan.capability.CapabilityService;
 import com.djrapitops.plan.delivery.web.ResourceService;
