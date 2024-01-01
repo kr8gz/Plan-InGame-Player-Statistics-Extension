@@ -1,10 +1,8 @@
 package io.github.kr8gz.plan_ingame_player_statistics_extension;
 
 import com.djrapitops.plan.query.QueryService;
-import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.stat.ServerStatHandler;
-import net.minecraft.stat.Stat;
 import net.minecraft.util.WorldSavePath;
 import org.apache.commons.io.FilenameUtils;
 
@@ -71,10 +69,10 @@ public class QueryAPIAccessor {
                     " (" + PLAYER_UUID_COLUMN.name + ", " + STAT_NAME_COLUMN.name + ", " + VALUE_COLUMN.name + ") " +
                     "VALUES (?, ?, ?)";
 
-            executePlayerStatsBatchUpdate(insertPlayerStatsSql, statHandlers, (statement, statHandler, statEntry) -> {
-                statement.setString(1, getPlayerUUIDAsString(statHandler));
-                statement.setString(2, statEntry.getKey().getName());
-                statement.setInt(3, statEntry.getIntValue());
+            executePlayerStatsBatchUpdate(insertPlayerStatsSql, statHandlers, (statement, playerUUID, statName, statValue) -> {
+                statement.setString(1, playerUUID);
+                statement.setString(2, statName);
+                statement.setInt(3, statValue);
             });
         }
         catch (IOException e) {
@@ -87,32 +85,33 @@ public class QueryAPIAccessor {
                 " SET " + VALUE_COLUMN.name + " = ? " +
                 " WHERE " + PLAYER_UUID_COLUMN.name + " = ? AND " + STAT_NAME_COLUMN.name + " = ?";
 
-        executePlayerStatsBatchUpdate(updatePlayerStatsSql, statHandlers, (statement, statHandler, statEntry) -> {
-            statement.setInt(1, statEntry.getIntValue());
-            statement.setString(2, getPlayerUUIDAsString(statHandler));
-            statement.setString(3, statEntry.getKey().getName());
+        executePlayerStatsBatchUpdate(updatePlayerStatsSql, statHandlers, (statement, playerUUID, statName, statValue) -> {
+            statement.setInt(1, statValue);
+            statement.setString(2, playerUUID);
+            statement.setString(3, statName);
         });
     }
 
     @FunctionalInterface
-    private interface StatementParameterSetter {
-        void setUsing(PreparedStatement statement, ServerStatHandler statHandler, Object2IntMap.Entry<Stat<?>> statEntry) throws SQLException;
+    private interface PlayerStatsUpdateParameterSetter {
+        void setUsing(PreparedStatement statement,
+                      String playerUUID, String statName, int statValue) throws SQLException;
     }
 
-    private void executePlayerStatsBatchUpdate(String sql, Collection<ServerStatHandler> statHandlers, StatementParameterSetter statementParameterSetter) {
+    private void executePlayerStatsBatchUpdate(String sql, Collection<ServerStatHandler> statHandlers,
+                                               PlayerStatsUpdateParameterSetter parameterSetter) {
         if (statHandlers.isEmpty()) return;
         queryService.execute(sql, statement -> {
             for (var statHandler : statHandlers) {
                 for (var statEntry : statHandler.statMap.object2IntEntrySet()) {
-                    statementParameterSetter.setUsing(statement, statHandler, statEntry);
+                    var playerUUID = FilenameUtils.getBaseName(statHandler.file.toString());
+                    var statName = statEntry.getKey().getName();
+                    var statValue = statEntry.getIntValue();
+                    parameterSetter.setUsing(statement, playerUUID, statName, statValue);
                     statement.addBatch();
                 }
             }
             statement.executeBatch();
         });
-    }
-
-    private static String getPlayerUUIDAsString(ServerStatHandler statHandler) {
-        return FilenameUtils.getBaseName(statHandler.file.toString());
     }
 }
