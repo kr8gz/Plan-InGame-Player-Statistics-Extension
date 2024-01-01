@@ -22,21 +22,19 @@ public class PlanHook {
 
     private static final String PAGE_EXTENSIONS_PATH = "/page_extensions/";
 
+    private static boolean isPlanEnabled;
+    private static MinecraftServer server;
     private static QueryAPIAccessor queryAPIAccessor;
 
     public static void hookIntoPlan() {
-        // FIXME plan may be enabled before server starting event wtf??
-        ServerLifecycleEvents.SERVER_STARTING.register(server -> {
-            try {
-                if (!areRequiredCapabilitiesAvailable()) return;
-                CapabilityService.getInstance().registerEnableListener(isPlanEnabled -> {
-                    if (isPlanEnabled) registerPlanExtensions(server);
-                });
-            }
-            catch (NoClassDefFoundError e) {
-                System.out.println("Plan is not installed!");
-            }
-        });
+        try {
+            if (!areRequiredCapabilitiesAvailable()) return;
+            CapabilityService.getInstance().registerEnableListener(isPlanEnabled -> tryRegisterPlanExtensions(isPlanEnabled, server));
+            ServerLifecycleEvents.SERVER_STARTING.register(server -> tryRegisterPlanExtensions(isPlanEnabled, server));
+        }
+        catch (NoClassDefFoundError e) {
+            System.out.println("Plan is not installed!");
+        }
     }
 
     private static boolean areRequiredCapabilitiesAvailable() {
@@ -50,7 +48,11 @@ public class PlanHook {
         });
     }
 
-    private static void registerPlanExtensions(MinecraftServer server) {
+    private static void tryRegisterPlanExtensions(boolean isPlanEnabled, MinecraftServer server) {
+        PlanHook.isPlanEnabled = isPlanEnabled;
+        PlanHook.server = server;
+        if (!isPlanEnabled || server == null) return;
+
         try {
             queryAPIAccessor = new QueryAPIAccessor(server);
             registerPageExtension("index.html", "example.js");
