@@ -9,7 +9,6 @@ import org.apache.commons.io.FilenameUtils;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.sql.PreparedStatement;
-import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Collection;
 
@@ -69,11 +68,7 @@ public class QueryAPIAccessor {
                     " (" + PLAYER_UUID_COLUMN.name + ", " + STAT_NAME_COLUMN.name + ", " + VALUE_COLUMN.name + ") " +
                     "VALUES (?, ?, ?)";
 
-            executePlayerStatsBatchUpdate(insertPlayerStatsSql, statHandlers, (statement, playerUUID, statName, statValue) -> {
-                statement.setString(1, playerUUID);
-                statement.setString(2, statName);
-                statement.setInt(3, statValue);
-            });
+            executePlayerStatsBatchUpdate(insertPlayerStatsSql, statHandlers, 1, 2, 3);
         }
         catch (IOException e) {
             e.printStackTrace();
@@ -85,29 +80,18 @@ public class QueryAPIAccessor {
                 " SET " + VALUE_COLUMN.name + " = ? " +
                 " WHERE " + PLAYER_UUID_COLUMN.name + " = ? AND " + STAT_NAME_COLUMN.name + " = ?";
 
-        executePlayerStatsBatchUpdate(updatePlayerStatsSql, statHandlers, (statement, playerUUID, statName, statValue) -> {
-            statement.setInt(1, statValue);
-            statement.setString(2, playerUUID);
-            statement.setString(3, statName);
-        });
-    }
-
-    @FunctionalInterface
-    private interface PlayerStatsUpdateParameterSetter {
-        void setUsing(PreparedStatement statement,
-                      String playerUUID, String statName, int statValue) throws SQLException;
+        executePlayerStatsBatchUpdate(updatePlayerStatsSql, statHandlers, 2, 3, 1);
     }
 
     private void executePlayerStatsBatchUpdate(String sql, Collection<ServerStatHandler> statHandlers,
-                                               PlayerStatsUpdateParameterSetter parameterSetter) {
+                                               int playerUUIDIndex, int statNameIndex, int valueIndex) {
         if (statHandlers.isEmpty()) return;
         queryService.execute(sql, statement -> {
             for (var statHandler : statHandlers) {
                 for (var statEntry : statHandler.statMap.object2IntEntrySet()) {
-                    var playerUUID = FilenameUtils.getBaseName(statHandler.file.toString());
-                    var statName = statEntry.getKey().getName();
-                    var statValue = statEntry.getIntValue();
-                    parameterSetter.setUsing(statement, playerUUID, statName, statValue);
+                    statement.setString(playerUUIDIndex, FilenameUtils.getBaseName(statHandler.file.toString()));
+                    statement.setString(statNameIndex, statEntry.getKey().getName());
+                    statement.setInt(valueIndex, statEntry.getIntValue());
                     statement.addBatch();
                 }
             }
