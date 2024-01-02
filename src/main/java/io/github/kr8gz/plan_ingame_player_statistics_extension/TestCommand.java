@@ -15,25 +15,17 @@ import net.minecraft.stat.Stats;
 import net.minecraft.text.Text;
 
 import java.util.Optional;
-import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
+// remove this class before releasing
 public class TestCommand {
     private static final String STAT_ARGUMENT_NAME = "stat";
-    private static final UUID kr8gz_UUID = UUID.fromString("806e9f10-7705-494e-b2bd-4be53d493c69");
 
     public static void register(CommandDispatcher<ServerCommandSource> dispatcher) {
         dispatcher.register(CommandManager.literal("test")
-                .requires(TestCommand::canExecuteCommand)
                 .then(CommandManager.argument(STAT_ARGUMENT_NAME, IdentifierArgumentType.identifier())
                         .suggests(TestCommand::getSuggestions)
                         .executes(TestCommand::execute)));
-    }
-
-    private static boolean canExecuteCommand(ServerCommandSource source) {
-        return Optional.ofNullable(source.getPlayer())
-                .map(player -> player.getGameProfile().getId() == kr8gz_UUID)
-                .orElse(false);
     }
 
     private static CompletableFuture<Suggestions> getSuggestions(CommandContext<ServerCommandSource> context, SuggestionsBuilder builder) {
@@ -41,12 +33,10 @@ public class TestCommand {
     }
 
     private static int execute(CommandContext<ServerCommandSource> context) {
-        var queryAPIAccessor = PlanHook.getQueryAPIAccessor().orElseThrow(() -> new CommandException(Text.literal("Plan is not enabled!")));
-
         var optionalStat = Optional.ofNullable(Registries.CUSTOM_STAT.get(IdentifierArgumentType.getIdentifier(context, STAT_ARGUMENT_NAME)));
         var stat = Stats.CUSTOM.getOrCreateStat(optionalStat.orElseThrow(() -> new CommandException(Text.literal("Unknown stat"))));
 
-        var statMap = queryAPIAccessor.getStatForAllPlayers(stat);
+        var statMap = getQueryAPIAccessor().getStatForAllPlayers(stat);
         if (statMap.isEmpty()) {
             context.getSource().sendFeedback(() -> Text.literal("No data"), false);
         } else {
@@ -56,5 +46,9 @@ public class TestCommand {
             });
         }
         return Command.SINGLE_SUCCESS;
+    }
+
+    private static QueryAPIAccessor getQueryAPIAccessor() {
+        return PlanHook.getQueryAPIAccessor().orElseThrow(() -> new CommandException(Text.literal("Plan is not enabled!")));
     }
 }
