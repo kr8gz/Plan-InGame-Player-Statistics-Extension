@@ -12,12 +12,11 @@ import org.apache.commons.io.FilenameUtils;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.sql.PreparedStatement;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 public class QueryAPIAccessor {
-    private static final String INGAME_STATISTICS_TABLE_NAME = "ingame_player_statistics";
+    private static final String INGAME_STATISTICS_TABLE_NAME = "plan_ingame_player_statistics";
 
     private record TableColumn(String name, String type) {
         @Override
@@ -38,37 +37,25 @@ public class QueryAPIAccessor {
         populatePlayerStats(server);
     }
 
+    private static final String CREATE_TABLE_SQL =
+            "CREATE TABLE IF NOT EXISTS " + INGAME_STATISTICS_TABLE_NAME + " (" +
+                    PLAYER_UUID_COLUMN + ", " +
+                    STAT_NAME_COLUMN + ", " +
+                    VALUE_COLUMN + ", " +
+                    "PRIMARY KEY(" + PLAYER_UUID_COLUMN.name + ", " + STAT_NAME_COLUMN.name + ")" +
+            ")";
+
     private void createTableIfNeeded() {
-        var createTableSql = "CREATE TABLE IF NOT EXISTS " + INGAME_STATISTICS_TABLE_NAME + " (" +
-                PLAYER_UUID_COLUMN + ", " +
-                STAT_NAME_COLUMN + ", " +
-                VALUE_COLUMN + ", " +
-                "PRIMARY KEY(" + PLAYER_UUID_COLUMN.name + ", " + STAT_NAME_COLUMN.name + ")" +
-                ")";
-
-        queryService.execute(createTableSql, PreparedStatement::execute);
+        queryService.execute(CREATE_TABLE_SQL, PreparedStatement::execute);
     }
 
-    private List<String> getExistingUUIDs() {
-        var selectExistingUUIDsSql = "SELECT DISTINCT " + PLAYER_UUID_COLUMN.name + " FROM " + INGAME_STATISTICS_TABLE_NAME;
-
-        return queryService.query(selectExistingUUIDsSql, statement -> {
-            try (var resultSet = statement.executeQuery()) {
-                var existingUUIDs = new ArrayList<String>();
-                while (resultSet.next()) {
-                    existingUUIDs.add(resultSet.getString(PLAYER_UUID_COLUMN.name));
-                }
-                return existingUUIDs;
-            }
-        });
-    }
+    private static final Function<Stat<?>, String> GET_PLAYER_STATS_SQL = stat ->
+            "SELECT " + PLAYER_UUID_COLUMN.name + ", " + VALUE_COLUMN.name +
+            " FROM " + INGAME_STATISTICS_TABLE_NAME +
+            " WHERE " + STAT_NAME_COLUMN.name + " = '" + stat.getName() + "'";
 
     public Object2IntMap<String> getStatForAllPlayers(Stat<?> stat) {
-        var getAllPlayerStatsSql = "SELECT " + PLAYER_UUID_COLUMN.name + ", " + VALUE_COLUMN.name +
-                " FROM " + INGAME_STATISTICS_TABLE_NAME +
-                " WHERE " + STAT_NAME_COLUMN.name + " = '" + stat.getName() + "'";
-
-        return queryService.query(getAllPlayerStatsSql, statement -> {
+        return queryService.query(GET_PLAYER_STATS_SQL.apply(stat), statement -> {
             try (var resultSet = statement.executeQuery()) {
                 var playerStats = new Object2IntOpenHashMap<String>();
                 while (resultSet.next()) {
@@ -79,46 +66,26 @@ public class QueryAPIAccessor {
         });
     }
 
+    private static final Function<ServerStatHandler, String> UPDATE_PLAYER_STATS_SQL = statHandler -> {
+        var playerUUID = FilenameUtils.getBaseName(statHandler.file.toString());
+        var values = statHandler.statMap.object2IntEntrySet().stream()
+                .map(entry -> "('%s','%s',%s)".formatted(playerUUID, entry.getKey().getName(), entry.getIntValue()))
+                .collect(Collectors.joining(","));
+
+        return "REPLACE INTO " + INGAME_STATISTICS_TABLE_NAME +
+                " (" + PLAYER_UUID_COLUMN.name + ", " + STAT_NAME_COLUMN.name + ", " + VALUE_COLUMN.name + ") " +
+                " VALUES " + values;
+    };
+
     private void populatePlayerStats(MinecraftServer server) throws IOException {
         try (var playerStatsPathStream = Files.list(server.getSavePath(WorldSavePath.STATS))) {
-            var existingUUIDs = getExistingUUIDs();
-            var statHandlers = playerStatsPathStream
-                    .filter(path -> {
-                        var uuid = FilenameUtils.getBaseName(path.toString());
-                        return !existingUUIDs.contains(uuid);
-                    })
+            playerStatsPathStream
                     .map(path -> new ServerStatHandler(server, path.toFile()))
-                    .toList();
-
-            var insertPlayerStatsSql = "INSERT INTO " + INGAME_STATISTICS_TABLE_NAME +
-                    " (" + PLAYER_UUID_COLUMN.name + ", " + STAT_NAME_COLUMN.name + ", " + VALUE_COLUMN.name + ") " +
-                    "VALUES (?, ?, ?)";
-
-            executePlayerStatsBatchUpdate(insertPlayerStatsSql, statHandlers, 1, 2, 3);
+                    .forEach(this::updatePlayerStats);
         }
     }
 
-    public void updatePlayerStats(Collection<ServerStatHandler> statHandlers) {
-        var updatePlayerStatsSql = "UPDATE " + INGAME_STATISTICS_TABLE_NAME +
-                " SET " + VALUE_COLUMN.name + " = ? " +
-                " WHERE " + PLAYER_UUID_COLUMN.name + " = ? AND " + STAT_NAME_COLUMN.name + " = ?";
-
-        executePlayerStatsBatchUpdate(updatePlayerStatsSql, statHandlers, 2, 3, 1);
-    }
-
-    private void executePlayerStatsBatchUpdate(String sql, Collection<ServerStatHandler> statHandlers,
-                                               int playerUUIDIndex, int statNameIndex, int valueIndex) {
-        if (statHandlers.isEmpty()) return;
-        queryService.execute(sql, statement -> {
-            for (var statHandler : statHandlers) {
-                for (var statEntry : statHandler.statMap.object2IntEntrySet()) {
-                    statement.setString(playerUUIDIndex, FilenameUtils.getBaseName(statHandler.file.toString()));
-                    statement.setString(statNameIndex, statEntry.getKey().getName());
-                    statement.setInt(valueIndex, statEntry.getIntValue());
-                    statement.addBatch();
-                }
-            }
-            statement.executeBatch();
-        });
+    public void updatePlayerStats(ServerStatHandler statHandler) {
+        queryService.execute(UPDATE_PLAYER_STATS_SQL.apply(statHandler), PreparedStatement::execute);
     }
 }

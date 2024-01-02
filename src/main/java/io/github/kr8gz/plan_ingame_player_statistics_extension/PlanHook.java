@@ -37,7 +37,7 @@ public class PlanHook {
         return Arrays.stream(REQUIRED_CAPABILITIES).allMatch(capability -> {
             boolean hasCapability = capabilities.hasCapability(capability);
             if (!hasCapability) {
-                PlanInGamePlayerStatisticsExtension.LOGGER.error("Plan doesn't have required capability '{}' – please try updating Plan or this extension", capability);
+                PlanInGamePlayerStatisticsExtension.LOGGER.error("Plan doesn't have required capability '{}' - please try updating Plan or this extension", capability);
             }
             return hasCapability;
         });

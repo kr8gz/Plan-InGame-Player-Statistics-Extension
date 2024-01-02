@@ -1,10 +1,12 @@
-package io.github.kr8gz.plan_ingame_player_statistics_extension;
+package io.github.kr8gz.plan_ingame_player_statistics_extension.ingame;
 
 import com.mojang.brigadier.Command;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.suggestion.Suggestions;
 import com.mojang.brigadier.suggestion.SuggestionsBuilder;
+import io.github.kr8gz.plan_ingame_player_statistics_extension.PlanHook;
+import io.github.kr8gz.plan_ingame_player_statistics_extension.QueryAPIAccessor;
 import net.minecraft.command.CommandException;
 import net.minecraft.command.CommandSource;
 import net.minecraft.command.argument.IdentifierArgumentType;
@@ -41,7 +43,7 @@ public class TestCommand {
             context.getSource().sendFeedback(() -> Text.literal("No data"), false);
         } else {
             statMap.forEach((uuid, value) -> {
-                var message = Text.literal("%s's value for %s: %s".formatted(uuid, stat.getName(), value));
+                var message = Text.literal("%s | %s".formatted(uuid, value));
                 context.getSource().sendFeedback(() -> message, false);
             });
         }
