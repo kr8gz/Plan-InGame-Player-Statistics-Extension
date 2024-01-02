@@ -10,7 +10,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Optional;
 
-// TODO make actual error handling
 public class PlanHook {
     private static final String[] REQUIRED_CAPABILITIES = new String[] {
             "PAGE_EXTENSION_RESOLVERS",
@@ -27,13 +26,9 @@ public class PlanHook {
     private static QueryAPIAccessor queryAPIAccessor;
 
     public static void hookIntoPlan() {
-        try {
-            if (!areRequiredCapabilitiesAvailable()) return;
+        if (areRequiredCapabilitiesAvailable()) {
             CapabilityService.getInstance().registerEnableListener(isPlanEnabled -> tryRegisterPlanExtensions(isPlanEnabled, server));
             ServerLifecycleEvents.SERVER_STARTING.register(server -> tryRegisterPlanExtensions(isPlanEnabled, server));
-        }
-        catch (NoClassDefFoundError e) {
-            System.out.println("Plan is not installed!");
         }
     }
 
@@ -42,7 +37,7 @@ public class PlanHook {
         return Arrays.stream(REQUIRED_CAPABILITIES).allMatch(capability -> {
             boolean hasCapability = capabilities.hasCapability(capability);
             if (!hasCapability) {
-                System.out.printf("Plan doesn't have capability '%s', you need to update Plan!%n", capability);
+                PlanInGamePlayerStatisticsExtension.LOGGER.error("Plan doesn't have required capability '{}' – please try updating Plan or this extension", capability);
             }
             return hasCapability;
         });
@@ -57,31 +52,27 @@ public class PlanHook {
             queryAPIAccessor = new QueryAPIAccessor(server);
             registerPageExtension("index.html", "example.js");
         }
-        catch (IllegalStateException e) {
-            System.out.println("Plan is not enabled!");
+        catch (IOException e) {
+            PlanInGamePlayerStatisticsExtension.LOGGER.error("I/O exception occurred during initialization", e);
         }
     }
 
-    private static void registerPageExtension(String target, String resource) {
+    private static void registerPageExtension(String target, String resource) throws IOException {
         var path = PAGE_EXTENSIONS_PATH + resource;
         try (var inputStream = PlanHook.class.getResourceAsStream(path)) {
             if (inputStream == null) {
-                System.out.printf("Couldn't find resource %s!%n", path);
+                PlanInGamePlayerStatisticsExtension.LOGGER.error("Exception registering page extension: Couldn't find resource {}!", path);
                 return;
             }
-
             if (resource.endsWith(".js")) {
                 ResourceService.getInstance().addJavascriptToResource(
-                        "Plan In-Game Player Statistics Extension",
+                        PlanInGamePlayerStatisticsExtension.NAME,
                         target,
                         ResourceService.Position.PRE_MAIN_SCRIPT,
                         resource,
                         new String(inputStream.readAllBytes(), StandardCharsets.UTF_8)
                 );
             }
-        }
-        catch (IOException e) {
-            e.printStackTrace();
         }
     }
 

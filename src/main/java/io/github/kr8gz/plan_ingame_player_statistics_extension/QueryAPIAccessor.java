@@ -1,8 +1,11 @@
 package io.github.kr8gz.plan_ingame_player_statistics_extension;
 
 import com.djrapitops.plan.query.QueryService;
+import it.unimi.dsi.fastutil.objects.Object2IntMap;
+import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.stat.ServerStatHandler;
+import net.minecraft.stat.Stat;
 import net.minecraft.util.WorldSavePath;
 import org.apache.commons.io.FilenameUtils;
 
@@ -11,11 +14,12 @@ import java.nio.file.Files;
 import java.sql.PreparedStatement;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.List;
 
 public class QueryAPIAccessor {
     private static final String INGAME_STATISTICS_TABLE_NAME = "ingame_player_statistics";
 
-    record TableColumn(String name, String type) {
+    private record TableColumn(String name, String type) {
         @Override
         public String toString() {
             return "%s %s".formatted(name, type);
@@ -28,7 +32,7 @@ public class QueryAPIAccessor {
 
     private final QueryService queryService;
 
-    public QueryAPIAccessor(MinecraftServer server) {
+    public QueryAPIAccessor(MinecraftServer server) throws IOException {
         this.queryService = QueryService.getInstance();
         createTableIfNeeded();
         populatePlayerStats(server);
@@ -41,21 +45,43 @@ public class QueryAPIAccessor {
                 VALUE_COLUMN + ", " +
                 "PRIMARY KEY(" + PLAYER_UUID_COLUMN.name + ", " + STAT_NAME_COLUMN.name + ")" +
                 ")";
+
         queryService.execute(createTableSql, PreparedStatement::execute);
     }
 
-    private void populatePlayerStats(MinecraftServer server) {
-        var existingUUIDs = new ArrayList<String>();
+    private List<String> getExistingUUIDs() {
         var selectExistingUUIDsSql = "SELECT DISTINCT " + PLAYER_UUID_COLUMN.name + " FROM " + INGAME_STATISTICS_TABLE_NAME;
 
-        queryService.execute(selectExistingUUIDsSql, statement -> {
-            var resultSet = statement.executeQuery();
-            while (resultSet.next()) {
-                existingUUIDs.add(resultSet.getString(PLAYER_UUID_COLUMN.name));
+        return queryService.query(selectExistingUUIDsSql, statement -> {
+            try (var resultSet = statement.executeQuery()) {
+                var existingUUIDs = new ArrayList<String>();
+                while (resultSet.next()) {
+                    existingUUIDs.add(resultSet.getString(PLAYER_UUID_COLUMN.name));
+                }
+                return existingUUIDs;
             }
         });
+    }
 
+    public Object2IntMap<String> getStatForAllPlayers(Stat<?> stat) {
+        var getAllPlayerStatsSql = "SELECT " + PLAYER_UUID_COLUMN.name + ", " + VALUE_COLUMN.name +
+                " FROM " + INGAME_STATISTICS_TABLE_NAME +
+                " WHERE " + STAT_NAME_COLUMN.name + " = '" + stat.getName() + "'";
+
+        return queryService.query(getAllPlayerStatsSql, statement -> {
+            try (var resultSet = statement.executeQuery()) {
+                var playerStats = new Object2IntOpenHashMap<String>();
+                while (resultSet.next()) {
+                    playerStats.put(resultSet.getString(PLAYER_UUID_COLUMN.name), resultSet.getInt(VALUE_COLUMN.name));
+                }
+                return playerStats;
+            }
+        });
+    }
+
+    private void populatePlayerStats(MinecraftServer server) throws IOException {
         try (var playerStatsPathStream = Files.list(server.getSavePath(WorldSavePath.STATS))) {
+            var existingUUIDs = getExistingUUIDs();
             var statHandlers = playerStatsPathStream
                     .filter(path -> {
                         var uuid = FilenameUtils.getBaseName(path.toString());
@@ -69,9 +95,6 @@ public class QueryAPIAccessor {
                     "VALUES (?, ?, ?)";
 
             executePlayerStatsBatchUpdate(insertPlayerStatsSql, statHandlers, 1, 2, 3);
-        }
-        catch (IOException e) {
-            e.printStackTrace();
         }
     }
 
