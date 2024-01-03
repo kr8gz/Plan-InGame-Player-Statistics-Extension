@@ -12,19 +12,26 @@ import org.apache.commons.io.FilenameUtils;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.sql.PreparedStatement;
-import java.util.function.Function;
-import java.util.stream.Collectors;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 public class QueryAPIAccessor {
-    private static final String INGAME_STATISTICS_TABLE_NAME = "plan_ingame_player_statistics";
-
     private record TableColumn(String name, String type) {
         @Override
         public String toString() {
+            return name;
+        }
+
+        public String withType() {
             return "%s %s".formatted(name, type);
         }
     }
 
+    private static final String INGAME_STATS_TABLE = "plan_ingame_player_statistics";
     private static final TableColumn PLAYER_UUID_COLUMN = new TableColumn("player_uuid", "char(36)");
     private static final TableColumn STAT_NAME_COLUMN = new TableColumn("stat_name", "varchar(255)");
     private static final TableColumn VALUE_COLUMN = new TableColumn("value", "int");
@@ -33,59 +40,132 @@ public class QueryAPIAccessor {
 
     public QueryAPIAccessor(MinecraftServer server) throws IOException {
         this.queryService = QueryService.getInstance();
-        createTableIfNeeded();
-        populatePlayerStats(server);
+        initializeDatabase(server);
     }
 
     private static final String CREATE_TABLE_SQL =
-            "CREATE TABLE IF NOT EXISTS " + INGAME_STATISTICS_TABLE_NAME + " (" +
-                    PLAYER_UUID_COLUMN + ", " +
-                    STAT_NAME_COLUMN + ", " +
-                    VALUE_COLUMN + ", " +
-                    "PRIMARY KEY(" + PLAYER_UUID_COLUMN.name + ", " + STAT_NAME_COLUMN.name + ")" +
+            "CREATE TABLE " + INGAME_STATS_TABLE + "(" +
+                    PLAYER_UUID_COLUMN.withType() + ", " +
+                    STAT_NAME_COLUMN.withType() + ", " +
+                    VALUE_COLUMN.withType() + ", " +
+                    "PRIMARY KEY(" + PLAYER_UUID_COLUMN + ", " + STAT_NAME_COLUMN + ")" +
             ")";
 
-    private void createTableIfNeeded() {
-        queryService.execute(CREATE_TABLE_SQL, PreparedStatement::execute);
+    private void initializeDatabase(MinecraftServer server) throws IOException {
+        if (!queryService.getCommonQueries().doesDBHaveTable(INGAME_STATS_TABLE)) {
+            queryService.execute(CREATE_TABLE_SQL, PreparedStatement::executeUpdate);
+        }
+
+        try (var playerStatsFiles = Files.list(server.getSavePath(WorldSavePath.STATS))) {
+            var existingUUIDs = getExistingUUIDs();
+
+            var updatePlayerStatsTasks = playerStatsFiles
+                    .filter(path -> {
+                        var playerUUID = FilenameUtils.getBaseName(path.toString());
+                        return !existingUUIDs.contains(playerUUID);
+                    })
+                    .map(path -> new ServerStatHandler(server, path.toFile()))
+                    .map(this::updatePlayerStats)
+                    .toList();
+
+            if (!updatePlayerStatsTasks.isEmpty()) {
+                logInitializationProgress(updatePlayerStatsTasks);
+            }
+        }
     }
 
-    private static final Function<Stat<?>, String> GET_PLAYER_STATS_SQL = stat ->
-            "SELECT " + PLAYER_UUID_COLUMN.name + ", " + VALUE_COLUMN.name +
-            " FROM " + INGAME_STATISTICS_TABLE_NAME +
-            " WHERE " + STAT_NAME_COLUMN.name + " = '" + stat.getName() + "'";
+    private static void logInitializationProgress(List<? extends Future<?>> updatePlayerStatsTasks) {
+        var progressUpdateScheduler = Executors.newScheduledThreadPool(1);
+        progressUpdateScheduler.scheduleAtFixedRate(() -> {
+            var completedCount = updatePlayerStatsTasks.stream().filter(Future::isDone).count();
+            var completedPercentage = (double) completedCount / updatePlayerStatsTasks.size() * 100;
 
-    public Object2IntMap<String> getStatForAllPlayers(Stat<?> stat) {
-        return queryService.query(GET_PLAYER_STATS_SQL.apply(stat), statement -> {
+            PlanInGamePlayerStatisticsExtension.LOGGER.info("Initializing database: {}/{} ({}%)", completedCount, updatePlayerStatsTasks.size(), (int) completedPercentage);
+
+            if (completedCount == updatePlayerStatsTasks.size()) {
+                progressUpdateScheduler.shutdown();
+            }
+        }, 0, 1, TimeUnit.SECONDS);
+    }
+
+    private static final String GET_EXISTING_UUIDS_SQL =
+            "SELECT DISTINCT " + PLAYER_UUID_COLUMN + " FROM " + INGAME_STATS_TABLE;
+
+    private List<String> getExistingUUIDs() {
+        return queryService.query(GET_EXISTING_UUIDS_SQL, statement -> {
             try (var resultSet = statement.executeQuery()) {
-                var playerStats = new Object2IntOpenHashMap<String>();
+                var existingUUIDs = new ArrayList<String>();
                 while (resultSet.next()) {
-                    playerStats.put(resultSet.getString(PLAYER_UUID_COLUMN.name), resultSet.getInt(VALUE_COLUMN.name));
+                    existingUUIDs.add(resultSet.getString(PLAYER_UUID_COLUMN.name));
                 }
-                return playerStats;
+                return existingUUIDs;
             }
         });
     }
 
-    private static final Function<ServerStatHandler, String> UPDATE_PLAYER_STATS_SQL = statHandler -> {
-        var playerUUID = FilenameUtils.getBaseName(statHandler.file.toString());
-        var values = statHandler.statMap.object2IntEntrySet().stream()
-                .map(entry -> "('%s','%s',%s)".formatted(playerUUID, entry.getKey().getName(), entry.getIntValue()))
-                .collect(Collectors.joining(","));
+    private static final String UPDATE_PLAYER_STATS_SQL =
+            "REPLACE INTO " + INGAME_STATS_TABLE +
+            " (" + PLAYER_UUID_COLUMN + ", " + STAT_NAME_COLUMN + ", " + VALUE_COLUMN + ")" +
+            " VALUES (?, ?, ?)";
 
-        return "REPLACE INTO " + INGAME_STATISTICS_TABLE_NAME +
-                " (" + PLAYER_UUID_COLUMN.name + ", " + STAT_NAME_COLUMN.name + ", " + VALUE_COLUMN.name + ") " +
-                " VALUES " + values;
-    };
+    public Future<?> updatePlayerStats(ServerStatHandler statHandler) {
+        return queryService.execute(UPDATE_PLAYER_STATS_SQL, statement -> {
+            var playerUUID = FilenameUtils.getBaseName(statHandler.file.toString());
+            statement.setString(1, playerUUID);
 
-    private void populatePlayerStats(MinecraftServer server) throws IOException {
-        try (var playerStatsPathStream = Files.list(server.getSavePath(WorldSavePath.STATS))) {
-            playerStatsPathStream
-                    .map(path -> new ServerStatHandler(server, path.toFile()))
-                    .forEach(this::updatePlayerStats);
-        }
+            for (var statEntry : statHandler.statMap.object2IntEntrySet()) {
+                statement.setString(2, statEntry.getKey().getName());
+                statement.setInt(3, statEntry.getIntValue());
+                statement.addBatch();
+            }
+            statement.executeBatch();
+        });
     }
 
-    public void updatePlayerStats(ServerStatHandler statHandler) {
-        queryService.execute(UPDATE_PLAYER_STATS_SQL.apply(statHandler), PreparedStatement::execute);
+    private static final String GET_STAT_VALUES_SQL =
+            "SELECT " + PLAYER_UUID_COLUMN + ", " + VALUE_COLUMN +
+            " FROM " + INGAME_STATS_TABLE +
+            " WHERE " + STAT_NAME_COLUMN + " = ?";
+
+    public Object2IntMap<String> getStatForAllPlayers(Stat<?> stat) {
+        return queryService.query(GET_STAT_VALUES_SQL, statement -> {
+            statement.setString(1, stat.getName());
+            try (var resultSet = statement.executeQuery()) {
+                var playerStatValues = new Object2IntOpenHashMap<String>();
+                while (resultSet.next()) {
+                    playerStatValues.put(resultSet.getString(PLAYER_UUID_COLUMN.name), resultSet.getInt(VALUE_COLUMN.name));
+                }
+                return playerStatValues;
+            }
+        });
+    }
+
+    private static final String RANKED_STATISTICS_CTE = "ranked_statistics";
+    private static final String CTE_RANK = "rank";
+    private static final String GET_PLAYER_TOP_STATS_SQL =
+            "WITH " + RANKED_STATISTICS_CTE + " AS (" +
+                    "SELECT *, RANK() OVER (PARTITION BY " + STAT_NAME_COLUMN + " ORDER BY " + VALUE_COLUMN + " DESC) AS " + CTE_RANK +
+                    " FROM " + INGAME_STATS_TABLE +
+            ")" +
+            " SELECT * FROM " + RANKED_STATISTICS_CTE +
+            " WHERE " + PLAYER_UUID_COLUMN + " = ?" +
+            " ORDER BY " + CTE_RANK + " ASC, " + VALUE_COLUMN + " DESC";
+
+    public record RankedStatistic(String statName, int statValue, int rank) {}
+
+    public List<RankedStatistic> getPlayerTopStats(UUID playerUUID) {
+        return queryService.query(GET_PLAYER_TOP_STATS_SQL, statement -> {
+            statement.setString(1, playerUUID.toString());
+            try (var resultSet = statement.executeQuery()) {
+                var playerTopStats = new ArrayList<RankedStatistic>();
+                while (resultSet.next()) {
+                    var statName = resultSet.getString(STAT_NAME_COLUMN.name);
+                    var statValue = resultSet.getInt(VALUE_COLUMN.name);
+                    var rank = resultSet.getInt(CTE_RANK);
+                    playerTopStats.add(new RankedStatistic(statName, statValue, rank));
+                }
+                return playerTopStats;
+            }
+        });
     }
 }
