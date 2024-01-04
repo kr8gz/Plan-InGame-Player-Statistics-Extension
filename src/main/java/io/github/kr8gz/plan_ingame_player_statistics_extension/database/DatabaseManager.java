@@ -1,6 +1,7 @@
-package io.github.kr8gz.plan_ingame_player_statistics_extension;
+package io.github.kr8gz.plan_ingame_player_statistics_extension.database;
 
 import com.djrapitops.plan.query.QueryService;
+import io.github.kr8gz.plan_ingame_player_statistics_extension.PlanInGamePlayerStatisticsExtension;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
 import net.minecraft.server.MinecraftServer;
@@ -8,33 +9,47 @@ import net.minecraft.stat.ServerStatHandler;
 import net.minecraft.stat.Stat;
 import net.minecraft.util.WorldSavePath;
 import org.apache.commons.io.FilenameUtils;
+import org.apache.logging.log4j.core.config.plugins.validation.constraints.NotBlank;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.sql.PreparedStatement;
 import java.util.*;
-import java.util.concurrent.Executors;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
+import java.util.random.RandomGenerator;
 
 /**
- * Manages the database responsible for storing in-game statistics of players.
- * This class provides access to the database through methods for updating
+ * Manages the database responsible for storing in-game statistics of players,
+ * and provides access to the database through methods for updating
  * player statistics, as well as retrieving data using predefined queries.
  */
-public class DatabaseManager {
+public final class DatabaseManager {
     /**
      * Represents a table column in the database with a name and an SQL data type.
      *
-     * @param name The name of the table column.
-     * @param type The SQL data type of the table column.
+     * @param name the name of the table column
+     * @param type the SQL data type of the table column
      */
-    private record TableColumn(String name, String type) {
+    private record TableColumn(@NotBlank String name, @NotBlank String type) {
+        /**
+         * Returns the name of this table column, for convenient usage in string concatenations.
+         *
+         * @return the name of this table column
+         */
         @Override
         public String toString() {
             return name;
         }
 
+        /**
+         * Returns a formatted string containing the name and SQL data type of this table column, separated by a space.
+         * This method is useful for generating SQL statements such as those for creating tables,
+         * where both the column name and data type need to be specified.
+         *
+         * @return the name and SQL data type of this table column separated by space
+         */
         public String withType() {
             return "%s %s".formatted(name, type);
         }
@@ -46,12 +61,18 @@ public class DatabaseManager {
     private static final TableColumn VALUE_COLUMN = new TableColumn("value", "int");
 
     /**
+     * The random generator used for getting random entries from specific queries.
+     *
+     * @see DatabaseManager#getRandomStat
+     */
+    private static final RandomGenerator random = new Random();
+
+    /**
      * The {@link QueryService} instance for accessing and interacting with Plan's database,
      * where the tables used in this extension are stored. This service is employed by the
      * {@code DatabaseManager} to execute all necessary operations on the database.
      *
-     * @see com.djrapitops.plan.query.QueryService
-     * @see <a href="https://www.spigotmc.org/resources/plan-player-analytics.32536/" target="_blank">Plan Plugin</a>
+     * @see <a href="https://github.com/plan-player-analytics/Plan/wiki/APIv5-Query-API" target="_blank">Plan Query API</a>
      */
     private final QueryService queryService;
 
@@ -59,38 +80,47 @@ public class DatabaseManager {
      * Creates a new {@code DatabaseManager} instance, setting up the necessary database tables
      * and populating them with existing player statistics from the {@link MinecraftServer} instance.
      *
-     * @param server the server on which the extension is running
-     * @throws IOException if an I/O error occurs during the database initialization process
+     * @param server the Minecraft server on which the extension is running
+     * @throws IllegalStateException if the {@link QueryService} instance is not available yet because Plan is not enabled
+     * @throws DatabaseInitializationException if an exception occurs during database initialization
      */
-    public DatabaseManager(MinecraftServer server) throws IOException {
+    public DatabaseManager(@NotNull final MinecraftServer server) throws DatabaseInitializationException {
         this.queryService = QueryService.getInstance();
         initializeDatabase(server);
     }
 
     /**
-     * TODO
+     * Ensures that the necessary database tables are created, and inserts player statistics from the save files
+     * of the provided {@link MinecraftServer} for players that have no existing entries in the database.
      *
-     * @param server
-     * @throws IOException
+     * @param server the Minecraft server on which the extension is running
+     * @throws DatabaseInitializationException if an exception occurs during database initialization
      */
-    private void initializeDatabase(MinecraftServer server) throws IOException {
+    private void initializeDatabase(@NotNull final MinecraftServer server) throws DatabaseInitializationException {
         queryService.execute(CREATE_TABLE_SQL, PreparedStatement::executeUpdate);
 
         try (var playerStatsFiles = Files.list(server.getSavePath(WorldSavePath.STATS))) {
             var existingUUIDs = getExistingUUIDs();
 
-            var updatePlayerStatsTasks = playerStatsFiles
+            var statHandlers = playerStatsFiles
                     .filter(path -> {
                         var playerUUID = FilenameUtils.getBaseName(path.toString());
                         return !existingUUIDs.contains(playerUUID);
                     })
                     .map(path -> new ServerStatHandler(server, path.toFile()))
-                    .map(this::updatePlayerStats)
                     .toList();
 
-            if (!updatePlayerStatsTasks.isEmpty()) {
-                logInitializationProgress(updatePlayerStatsTasks);
+            var future = updatePlayerStats(statHandlers).orElse(null);
+            if (future == null) return;
+
+            try {
+                future.get();
+                PlanInGamePlayerStatisticsExtension.LOGGER.info("Successfully loaded player statistics files from server into database.");
+            } catch (InterruptedException | ExecutionException e) {
+                throw new DatabaseInitializationException("Exception occurred while writing player statistics to database", e);
             }
+        } catch (IOException e) {
+            throw new DatabaseInitializationException("I/O exception occurred while getting player statistics files", e);
         }
     }
 
@@ -103,29 +133,11 @@ public class DatabaseManager {
             ")";
 
     /**
-     * TODO
-     *
-     * @param updatePlayerStatsTasks
-     */
-    private static void logInitializationProgress(List<? extends Future<?>> updatePlayerStatsTasks) {
-        var progressUpdateScheduler = Executors.newScheduledThreadPool(1);
-        progressUpdateScheduler.scheduleAtFixedRate(() -> {
-            var completedCount = updatePlayerStatsTasks.stream().filter(Future::isDone).count();
-            var completedPercentage = (double) completedCount / updatePlayerStatsTasks.size() * 100;
-
-            PlanInGamePlayerStatisticsExtension.LOGGER.info("Database initialization in progress: {}/{} players processed ({}%)", completedCount, updatePlayerStatsTasks.size(), (int) completedPercentage);
-
-            if (completedCount == updatePlayerStatsTasks.size()) {
-                progressUpdateScheduler.shutdown();
-            }
-        }, 0, 1, TimeUnit.SECONDS);
-    }
-
-    /**
      * Fetches a list of player UUIDs that are currently stored in the database.
      *
-     * @return a list containing all stored player UUIDs as {@link String}s
+     * @return a list containing all stored player UUIDs as {@code String}s
      */
+    @NotNull
     private List<String> getExistingUUIDs() {
         return queryService.query(GET_EXISTING_UUIDS_SQL, statement -> {
             try (var resultSet = statement.executeQuery()) {
@@ -142,27 +154,34 @@ public class DatabaseManager {
             "SELECT DISTINCT " + PLAYER_UUID_COLUMN + " FROM " + INGAME_STATS_TABLE;
 
     /**
-     * Inserts player statistics provided by the {@code statHandler} into the database.
-     * Existing entries for the specified player UUID and statistic names are replaced.
+     * Inserts player statistics provided by the {@code statHandlers} into the database.
+     * Existing entries for player UUID and statistic names are replaced.
      * <p>
-     * The {@link Future} returned by this method can be used to block the thread with {@link Future#get()}
-     * until the SQL statement has executed.
+     * This method returns an optional {@code Future} that can be used to block the thread with {@link Future#get()}
+     * until the SQL statement has executed, or an empty optional if {@code statHandlers} is empty.
      *
-     * @param statHandler the {@link ServerStatHandler} instance containing player statistics to be updated
-     * @return a {@link Future} for tracking the asynchronous execution of the SQL statement
+     * @param statHandlers a {@code Collection} of {@link ServerStatHandler}s containing the player statistics to be updated
+     * @return an optional {@code Future} for tracking the execution of the SQL statement if {@code statHandlers} is not empty
      */
-    public Future<?> updatePlayerStats(ServerStatHandler statHandler) {
-        return queryService.execute(UPDATE_PLAYER_STATS_SQL, statement -> {
-            var playerUUID = FilenameUtils.getBaseName(statHandler.file.toString());
-            statement.setString(1, playerUUID);
+    @NotNull
+    public Optional<Future<?>> updatePlayerStats(@NotNull final Collection<ServerStatHandler> statHandlers) {
+        if (statHandlers.isEmpty()) return Optional.empty();
 
-            for (var statEntry : statHandler.statMap.object2IntEntrySet()) {
-                statement.setString(2, statEntry.getKey().getName());
-                statement.setInt(3, statEntry.getIntValue());
-                statement.addBatch();
+        Future<?> future = queryService.execute(UPDATE_PLAYER_STATS_SQL, statement -> {
+            for (ServerStatHandler statHandler : statHandlers) {
+                var playerUUID = FilenameUtils.getBaseName(statHandler.file.toString());
+                statement.setString(1, playerUUID);
+
+                for (var statEntry : statHandler.statMap.object2IntEntrySet()) {
+                    statement.setString(2, statEntry.getKey().getName());
+                    statement.setInt(3, statEntry.getIntValue());
+                    statement.addBatch();
+                }
             }
             statement.executeBatch();
         });
+
+        return Optional.of(future);
     }
 
     private static final String UPDATE_PLAYER_STATS_SQL =
@@ -173,10 +192,11 @@ public class DatabaseManager {
     /**
      * Returns a map containing player UUIDs and their associated values for the specified statistic from the database.
      *
-     * @param stat the {@link Stat} for which player statistics are to be retrieved
+     * @param stat the {@link Stat} for which to retrieve all players' values
      * @return an {@link Object2IntMap} with player UUIDs as keys and their corresponding statistic values
      */
-    public Object2IntMap<String> getStatForAllPlayers(Stat<?> stat) {
+    @NotNull
+    public Object2IntMap<String> getStatForAllPlayers(@NotNull final Stat<?> stat) {
         return queryService.query(GET_STAT_VALUES_SQL, statement -> {
             statement.setString(1, stat.getName());
             try (var resultSet = statement.executeQuery()) {
@@ -202,17 +222,18 @@ public class DatabaseManager {
      * @param statValue the value of the statistic
      * @param rank the player's position on the leaderboard for the specified statistic
      */
-    public record RankedStatistic(String statName, int statValue, int rank) {}
+    public record RankedStatistic(@NotBlank String statName, int statValue, int rank) {}
 
     /**
-     * Retrieves a list of {@link RankedStatistic}s for a player.
+     * Retrieves a list of {@code RankedStatistic}s for a player.
      * The returned list is ordered by the player's rank in ascending order,
      * followed by the statistic values in descending order.
      *
      * @param playerUUID the UUID of the player to get the statistics for
-     * @return a list of the player's statistics as {@link RankedStatistic} objects
+     * @return a list of the player's statistics as {@code RankedStatistic} objects
      */
-    public List<RankedStatistic> getPlayerTopStats(UUID playerUUID) {
+    @NotNull
+    public List<RankedStatistic> getPlayerTopStats(@NotNull final UUID playerUUID) {
         return queryService.query(GET_PLAYER_TOP_STATS_SQL, statement -> {
             statement.setString(1, playerUUID.toString());
             try (var resultSet = statement.executeQuery()) {
@@ -242,11 +263,12 @@ public class DatabaseManager {
     /**
      * Fetches a random statistic name from the database for which an entry exists.
      *
-     * @return an optional {@link String} with the selected statistic name,
+     * @return an optional {@code String} with the selected statistic name,
      *         or an empty optional if no entries exist
      */
+    @NotNull
     public Optional<String> getRandomStat() {
-        return queryService.query(GET_RANDOM_STAT_SQL, statement -> {
+        return queryService.query(GET_STAT_NAMES_SQL, statement -> {
             try (var resultSet = statement.executeQuery()) {
                 var statNames = new ArrayList<String>();
                 while (resultSet.next()) {
@@ -255,12 +277,12 @@ public class DatabaseManager {
                 if (statNames.isEmpty()) {
                     return Optional.empty();
                 }
-                var randomIndex = new Random().nextInt(statNames.size());
+                var randomIndex = random.nextInt(statNames.size());
                 return Optional.of(statNames.get(randomIndex));
             }
         });
     }
 
-    private static final String GET_RANDOM_STAT_SQL =
+    private static final String GET_STAT_NAMES_SQL =
             "SELECT DISTINCT " + STAT_NAME_COLUMN + " FROM " + INGAME_STATS_TABLE;
 }

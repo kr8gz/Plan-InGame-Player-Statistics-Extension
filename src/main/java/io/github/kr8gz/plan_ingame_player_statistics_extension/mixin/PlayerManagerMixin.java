@@ -11,9 +11,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 
 @Mixin(PlayerManager.class)
 public abstract class PlayerManagerMixin {
@@ -23,18 +21,21 @@ public abstract class PlayerManagerMixin {
 
     @Inject(method = "remove(Lnet/minecraft/server/network/ServerPlayerEntity;)V", at = @At(value = "INVOKE", target = "Lnet/minecraft/server/PlayerManager;savePlayerData(Lnet/minecraft/server/network/ServerPlayerEntity;)V"))
     private void remove(ServerPlayerEntity player, CallbackInfo ci) {
-        updatePlayerStats(statisticsMap.get(player.getUuid()));
+        var statHandlers = Collections.singleton(statisticsMap.get(player.getUuid()));
+        updatePlayerStats(statHandlers);
     }
 
     @Inject(method = "saveAllPlayerData()V", at = @At("HEAD"))
     private void saveAllPlayerData(CallbackInfo ci) {
-        players.stream()
+        var statHandlers = players.stream()
                 .map(player -> statisticsMap.get(player.getUuid()))
-                .forEach(PlayerManagerMixin::updatePlayerStats);
+                .toList();
+
+        updatePlayerStats(statHandlers);
     }
 
-    private static void updatePlayerStats(ServerStatHandler statHandler) {
+    private static void updatePlayerStats(Collection<ServerStatHandler> statHandlers) {
         PlanHook.getDatabaseManager()
-                .ifPresent(queryAPIAccessor -> queryAPIAccessor.updatePlayerStats(statHandler));
+                .ifPresent(queryAPIAccessor -> queryAPIAccessor.updatePlayerStats(statHandlers));
     }
 }

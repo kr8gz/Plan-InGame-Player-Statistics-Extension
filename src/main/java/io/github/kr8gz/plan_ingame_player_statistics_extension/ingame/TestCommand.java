@@ -6,7 +6,7 @@ import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.suggestion.Suggestions;
 import com.mojang.brigadier.suggestion.SuggestionsBuilder;
 import io.github.kr8gz.plan_ingame_player_statistics_extension.PlanHook;
-import io.github.kr8gz.plan_ingame_player_statistics_extension.DatabaseManager;
+import io.github.kr8gz.plan_ingame_player_statistics_extension.database.DatabaseManager;
 import net.minecraft.command.CommandException;
 import net.minecraft.command.CommandSource;
 import net.minecraft.command.argument.IdentifierArgumentType;

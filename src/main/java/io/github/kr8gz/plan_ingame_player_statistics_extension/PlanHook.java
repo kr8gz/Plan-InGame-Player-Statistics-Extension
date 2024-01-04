@@ -2,6 +2,7 @@ package io.github.kr8gz.plan_ingame_player_statistics_extension;
 
 import com.djrapitops.plan.capability.CapabilityService;
 import com.djrapitops.plan.delivery.web.ResourceService;
+import io.github.kr8gz.plan_ingame_player_statistics_extension.database.DatabaseManager;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.minecraft.server.MinecraftServer;
 
@@ -51,9 +52,8 @@ public class PlanHook {
         try {
             databaseManager = new DatabaseManager(server);
             registerPageExtension("index.html", "example.js");
-        }
-        catch (IOException e) {
-            PlanInGamePlayerStatisticsExtension.LOGGER.error("I/O exception occurred during initialization", e);
+        } catch (Exception e) {
+            PlanInGamePlayerStatisticsExtension.LOGGER.error("Exception occurred while initializing extension", e);
         }
     }
 
