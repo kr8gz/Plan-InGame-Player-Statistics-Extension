@@ -18,7 +18,6 @@ import java.sql.PreparedStatement;
 import java.util.*;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
-import java.util.random.RandomGenerator;
 
 /**
  * Manages the database responsible for storing in-game statistics of players,
@@ -61,42 +60,51 @@ public final class DatabaseManager {
     private static final TableColumn VALUE_COLUMN = new TableColumn("value", "int");
 
     /**
-     * The random generator used for getting random entries from specific queries.
-     *
-     * @see DatabaseManager#getRandomStat
-     */
-    private static final RandomGenerator random = new Random();
-
-    /**
      * The {@link QueryService} instance for accessing and interacting with Plan's database,
-     * where the tables used in this extension are stored. This service is employed by the
-     * {@code DatabaseManager} to execute all necessary operations on the database.
+     * where the tables used in this extension are stored. Used by the {@code DatabaseManager}
+     * to execute all necessary operations on the database, as well as for registering listeners
+     * for Plan database events to stay in sync with Plan's database.
      *
      * @see <a href="https://github.com/plan-player-analytics/Plan/wiki/APIv5-Query-API" target="_blank">Plan Query API</a>
      */
-    private final QueryService queryService;
+    private final @NotNull QueryService queryService;
+
+    /**
+     * The {@link MinecraftServer} instance on which the extension is running.
+     * The database is initialized using this server's player statistics files.
+     */
+    private final @NotNull MinecraftServer server;
 
     /**
      * Creates a new {@code DatabaseManager} instance, setting up the necessary database tables
      * and populating them with existing player statistics from the {@link MinecraftServer} instance.
+     * <p>
+     * Also registers listeners for Plan database events through the {@link QueryService} instance
+     * to stay in sync with Plan's database.
      *
      * @param server the Minecraft server on which the extension is running
-     * @throws IllegalStateException if the {@link QueryService} instance is not available yet because Plan is not enabled
+     * @throws IllegalStateException if the {@code QueryService} instance is not available yet because Plan is not enabled
      * @throws DatabaseInitializationException if an exception occurs during database initialization
+     *
+     * @see <a href="https://github.com/plan-player-analytics/Plan/wiki/Query-API-Getting-started" target=_"blank">Plan Query API – Getting started</a>
      */
     public DatabaseManager(@NotNull final MinecraftServer server) throws DatabaseInitializationException {
         this.queryService = QueryService.getInstance();
-        initializeDatabase(server);
+        this.server = server;
+
+        initializeDatabase();
+
+        queryService.subscribeDataClearEvent(this::clearData);
+        queryService.subscribeToPlayerRemoveEvent(this::removePlayer);
     }
 
     /**
      * Ensures that the necessary database tables are created, and inserts player statistics from the save files
-     * of the provided {@link MinecraftServer} for players that have no existing entries in the database.
+     * of this {@code DatabaseManager}'s {@link #server} for players that have no existing entries in the database.
      *
-     * @param server the Minecraft server on which the extension is running
      * @throws DatabaseInitializationException if an exception occurs during database initialization
      */
-    private void initializeDatabase(@NotNull final MinecraftServer server) throws DatabaseInitializationException {
+    private void initializeDatabase() throws DatabaseInitializationException {
         queryService.execute(CREATE_TABLE_SQL, PreparedStatement::executeUpdate);
 
         try (var playerStatsFiles = Files.list(server.getSavePath(WorldSavePath.STATS))) {
@@ -115,7 +123,7 @@ public final class DatabaseManager {
 
             try {
                 future.get();
-                PlanInGamePlayerStatisticsExtension.LOGGER.info("Successfully loaded player statistics files from server into database.");
+                PlanInGamePlayerStatisticsExtension.LOGGER.info("Successfully loaded {} player statistics files from server into database", statHandlers.size());
             } catch (InterruptedException | ExecutionException e) {
                 throw new DatabaseInitializationException("Exception occurred while writing player statistics to database", e);
             }
@@ -131,6 +139,32 @@ public final class DatabaseManager {
                     VALUE_COLUMN.withType() + ", " +
                     "PRIMARY KEY(" + PLAYER_UUID_COLUMN + ", " + STAT_NAME_COLUMN + ")" +
             ")";
+
+    /**
+     * Deletes the database tables entirely.
+     */
+    private void clearData() {
+        queryService.execute(DROP_TABLE_SQL, PreparedStatement::executeUpdate);
+    }
+
+    private static final String DROP_TABLE_SQL =
+            "DROP TABLE IF EXISTS " + INGAME_STATS_TABLE;
+
+    /**
+     * Removes all entries for the specified player UUID from the database.
+     *
+     * @param playerUUID the UUID of the player to be removed
+     */
+    private void removePlayer(UUID playerUUID) {
+        queryService.execute(REMOVE_PLAYER_ENTRIES_SQL, statement -> {
+            statement.setString(1, playerUUID.toString());
+            statement.executeUpdate();
+        });
+    }
+
+    private static final String REMOVE_PLAYER_ENTRIES_SQL =
+            "DELETE FROM " + INGAME_STATS_TABLE +
+            " WHERE " + PLAYER_UUID_COLUMN + " = ?";
 
     /**
      * Fetches a list of player UUIDs that are currently stored in the database.
@@ -161,7 +195,8 @@ public final class DatabaseManager {
      * until the SQL statement has executed, or an empty optional if {@code statHandlers} is empty.
      *
      * @param statHandlers a {@code Collection} of {@link ServerStatHandler}s containing the player statistics to be updated
-     * @return an optional {@code Future} for tracking the execution of the SQL statement if {@code statHandlers} is not empty
+     * @return an optional {@code Future} for tracking the execution of the SQL statement,
+     *         or an empty optional if {@code statHandlers} is empty
      */
     @NotNull
     public Optional<Future<?>> updatePlayerStats(@NotNull final Collection<ServerStatHandler> statHandlers) {
@@ -261,24 +296,25 @@ public final class DatabaseManager {
             " ORDER BY " + CTE_RANK + " ASC, " + VALUE_COLUMN + " DESC";
 
     /**
-     * Fetches a random statistic name from the database for which an entry exists.
+     * Fetches a random statistic from the database for which an entry exists.
      *
-     * @return an optional {@code String} with the selected statistic name,
-     *         or an empty optional if no entries exist
+     * @return an optional random {@link Stat}, or an empty optional if no entries exist
      */
     @NotNull
-    public Optional<String> getRandomStat() {
+    public Optional<Stat<?>> getRandomStat() {
         return queryService.query(GET_STAT_NAMES_SQL, statement -> {
             try (var resultSet = statement.executeQuery()) {
                 var statNames = new ArrayList<String>();
                 while (resultSet.next()) {
                     statNames.add(resultSet.getString(STAT_NAME_COLUMN.name));
                 }
-                if (statNames.isEmpty()) {
-                    return Optional.empty();
+                Collections.shuffle(statNames);
+
+                for (String statName : statNames) {
+                    var statCriterion = Stat.getOrCreateStatCriterion(statName).orElse(null);
+                    if (statCriterion instanceof Stat<?> stat) return Optional.of(stat);
                 }
-                var randomIndex = random.nextInt(statNames.size());
-                return Optional.of(statNames.get(randomIndex));
+                return Optional.empty();
             }
         });
     }

@@ -50,8 +50,8 @@ public class PlanHook {
         if (!isPlanEnabled || server == null) return;
 
         try {
-            databaseManager = new DatabaseManager(server);
             registerPageExtension("index.html", "example.js");
+            databaseManager = new DatabaseManager(server); // run this last as it may take a long time to initialize
         } catch (Exception e) {
             PlanInGamePlayerStatisticsExtension.LOGGER.error("Exception occurred while initializing extension", e);
         }
