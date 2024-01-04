@@ -23,7 +23,7 @@ public class PlanHook {
 
     private static boolean isPlanEnabled;
     private static MinecraftServer server;
-    private static QueryAPIAccessor queryAPIAccessor;
+    private static DatabaseManager databaseManager;
 
     public static void hookIntoPlan() {
         if (areRequiredCapabilitiesAvailable()) {
@@ -49,7 +49,7 @@ public class PlanHook {
         if (!isPlanEnabled || server == null) return;
 
         try {
-            queryAPIAccessor = new QueryAPIAccessor(server);
+            databaseManager = new DatabaseManager(server);
             registerPageExtension("index.html", "example.js");
         }
         catch (IOException e) {
@@ -76,7 +76,7 @@ public class PlanHook {
         }
     }
 
-    public static Optional<QueryAPIAccessor> getQueryAPIAccessor() {
-        return Optional.ofNullable(queryAPIAccessor);
+    public static Optional<DatabaseManager> getDatabaseManager() {
+        return Optional.ofNullable(databaseManager);
     }
 }

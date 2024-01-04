@@ -34,7 +34,7 @@ public abstract class PlayerManagerMixin {
     }
 
     private static void updatePlayerStats(ServerStatHandler statHandler) {
-        PlanHook.getQueryAPIAccessor()
+        PlanHook.getDatabaseManager()
                 .ifPresent(queryAPIAccessor -> queryAPIAccessor.updatePlayerStats(statHandler));
     }
 }
