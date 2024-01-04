@@ -1,5 +1,6 @@
 package io.github.kr8gz.plan_ingame_player_statistics_extension;
 
+import io.github.kr8gz.plan_ingame_player_statistics_extension.common.PlanHook;
 import io.github.kr8gz.plan_ingame_player_statistics_extension.ingame.TestCommand;
 import net.fabricmc.api.DedicatedServerModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;

@@ -168,6 +168,7 @@ public final class DatabaseManager {
 
     /**
      * Fetches a list of player UUIDs that are currently stored in the database.
+     * UUIDs are intentionally kept as {@code String}s for internal processing.
      *
      * @return a list containing all stored player UUIDs as {@code String}s
      */
@@ -231,13 +232,14 @@ public final class DatabaseManager {
      * @return an {@link Object2IntMap} with player UUIDs as keys and their corresponding statistic values
      */
     @NotNull
-    public Object2IntMap<String> getStatForAllPlayers(@NotNull final Stat<?> stat) {
+    public Object2IntMap<UUID> getStatForAllPlayers(@NotNull final Stat<?> stat) {
         return queryService.query(GET_STAT_VALUES_SQL, statement -> {
             statement.setString(1, stat.getName());
             try (var resultSet = statement.executeQuery()) {
-                var playerStatValues = new Object2IntOpenHashMap<String>();
+                var playerStatValues = new Object2IntOpenHashMap<UUID>();
                 while (resultSet.next()) {
-                    playerStatValues.put(resultSet.getString(PLAYER_UUID_COLUMN.name), resultSet.getInt(VALUE_COLUMN.name));
+                    var playerUUID = UUID.fromString(resultSet.getString(PLAYER_UUID_COLUMN.name));
+                    playerStatValues.put(playerUUID, resultSet.getInt(VALUE_COLUMN.name));
                 }
                 return playerStatValues;
             }
@@ -288,37 +290,10 @@ public final class DatabaseManager {
     private static final String CTE_RANK = "rank";
     private static final String GET_PLAYER_TOP_STATS_SQL =
             "WITH " + RANKED_STATISTICS_CTE + " AS (" +
-            "SELECT *, RANK() OVER (PARTITION BY " + STAT_NAME_COLUMN + " ORDER BY " + VALUE_COLUMN + " DESC) AS " + CTE_RANK +
-            " FROM " + INGAME_STATS_TABLE +
+                    "SELECT *, RANK() OVER (PARTITION BY " + STAT_NAME_COLUMN + " ORDER BY " + VALUE_COLUMN + " DESC) AS " + CTE_RANK +
+                    " FROM " + INGAME_STATS_TABLE +
             ")" +
             " SELECT * FROM " + RANKED_STATISTICS_CTE +
             " WHERE " + PLAYER_UUID_COLUMN + " = ?" +
             " ORDER BY " + CTE_RANK + " ASC, " + VALUE_COLUMN + " DESC";
-
-    /**
-     * Fetches a random statistic from the database for which an entry exists.
-     *
-     * @return an optional random {@link Stat}, or an empty optional if no entries exist
-     */
-    @NotNull
-    public Optional<Stat<?>> getRandomStat() {
-        return queryService.query(GET_STAT_NAMES_SQL, statement -> {
-            try (var resultSet = statement.executeQuery()) {
-                var statNames = new ArrayList<String>();
-                while (resultSet.next()) {
-                    statNames.add(resultSet.getString(STAT_NAME_COLUMN.name));
-                }
-                Collections.shuffle(statNames);
-
-                for (String statName : statNames) {
-                    var statCriterion = Stat.getOrCreateStatCriterion(statName).orElse(null);
-                    if (statCriterion instanceof Stat<?> stat) return Optional.of(stat);
-                }
-                return Optional.empty();
-            }
-        });
-    }
-
-    private static final String GET_STAT_NAMES_SQL =
-            "SELECT DISTINCT " + STAT_NAME_COLUMN + " FROM " + INGAME_STATS_TABLE;
 }

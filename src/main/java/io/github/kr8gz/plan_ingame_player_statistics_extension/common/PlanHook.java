@@ -1,13 +1,13 @@
-package io.github.kr8gz.plan_ingame_player_statistics_extension;
+package io.github.kr8gz.plan_ingame_player_statistics_extension.common;
 
 import com.djrapitops.plan.capability.CapabilityService;
-import com.djrapitops.plan.delivery.web.ResourceService;
+import com.djrapitops.plan.delivery.web.ResolverService;
+import io.github.kr8gz.plan_ingame_player_statistics_extension.PlanInGamePlayerStatisticsExtension;
 import io.github.kr8gz.plan_ingame_player_statistics_extension.database.DatabaseManager;
+import io.github.kr8gz.plan_ingame_player_statistics_extension.web.IngameStatsJSONResolver;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.minecraft.server.MinecraftServer;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Optional;
 
@@ -20,7 +20,7 @@ public class PlanHook {
             "QUERY_API",
     };
 
-    private static final String PAGE_EXTENSIONS_PATH = "/page_extensions/";
+    // private static final String PAGE_EXTENSIONS_PATH = "/page_extensions/";
 
     private static boolean isPlanEnabled;
     private static MinecraftServer server;
@@ -50,31 +50,35 @@ public class PlanHook {
         if (!isPlanEnabled || server == null) return;
 
         try {
-            registerPageExtension("index.html", "example.js");
+            // registerPageExtension("index.html", "example.js");
+
+            var resolverService = ResolverService.getInstance();
+            resolverService.registerResolver(PlanInGamePlayerStatisticsExtension.NAME, "/v1/ingameStats", new IngameStatsJSONResolver());
+
             databaseManager = new DatabaseManager(server); // run this last as it may take a long time to initialize
         } catch (Exception e) {
             PlanInGamePlayerStatisticsExtension.LOGGER.error("Exception occurred while initializing extension", e);
         }
     }
 
-    private static void registerPageExtension(String target, String resource) throws IOException {
-        var path = PAGE_EXTENSIONS_PATH + resource;
-        try (var inputStream = PlanHook.class.getResourceAsStream(path)) {
-            if (inputStream == null) {
-                PlanInGamePlayerStatisticsExtension.LOGGER.error("Exception registering page extension: Couldn't find resource {}!", path);
-                return;
-            }
-            if (resource.endsWith(".js")) {
-                ResourceService.getInstance().addJavascriptToResource(
-                        PlanInGamePlayerStatisticsExtension.NAME,
-                        target,
-                        ResourceService.Position.PRE_MAIN_SCRIPT,
-                        resource,
-                        new String(inputStream.readAllBytes(), StandardCharsets.UTF_8)
-                );
-            }
-        }
-    }
+    // private static void registerPageExtension(String target, String resource) throws IOException {
+    //     var path = PAGE_EXTENSIONS_PATH + resource;
+    //     try (var inputStream = PlanHook.class.getResourceAsStream(path)) {
+    //         if (inputStream == null) {
+    //             PlanInGamePlayerStatisticsExtension.LOGGER.error("Exception registering page extension: Couldn't find resource {}!", path);
+    //             return;
+    //         }
+    //         if (resource.endsWith(".js")) {
+    //             ResourceService.getInstance().addJavascriptToResource(
+    //                     PlanInGamePlayerStatisticsExtension.NAME,
+    //                     target,
+    //                     ResourceService.Position.PRE_MAIN_SCRIPT,
+    //                     resource,
+    //                     new String(inputStream.readAllBytes(), StandardCharsets.UTF_8)
+    //             );
+    //         }
+    //     }
+    // }
 
     public static Optional<DatabaseManager> getDatabaseManager() {
         return Optional.ofNullable(databaseManager);
